@@ -115,11 +115,8 @@
       </el-drawer>
 
       <el-main class="main-content">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <!-- 删除 transition 包裹，直接渲染组件，消除页面切换时的 opacity 重绘 -->
+        <router-view />
       </el-main>
     </el-container>
   </el-container>
@@ -245,7 +242,6 @@ const handleSelectAndCloseDrawer = (index: string) => {
   height: 60px;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--container-bg-color);
-  /* 删除 transition：主题切换不需要动画，避免触发全局重绘 */
 }
 
 .header-logo, .header-actions {
@@ -278,7 +274,6 @@ const handleSelectAndCloseDrawer = (index: string) => {
   background-color: var(--container-bg-color);
   border-right: 1px solid var(--border-color);
   overflow: hidden;
-  /* 删除 transition: width，宽度动画会触发整个页面 reflow + repaint */
   will-change: width;
 }
 
@@ -292,17 +287,6 @@ const handleSelectAndCloseDrawer = (index: string) => {
   background-color: var(--background-color);
   height: calc(100vh - 60px);
   overflow-y: auto;
-}
-
-/* 路由切换动画缩短至 0.15s */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
 }
 
 .hidden-xs-only {
