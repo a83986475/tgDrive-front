@@ -76,7 +76,7 @@
               <el-button text type="primary" @click="goToFileList">查看全部</el-button>
             </div>
           </template>
-          
+
           <div v-if="uploadedFiles.length === 0" class="empty-state">
             <el-empty description="暂无上传成功的文件" />
           </div>
@@ -126,6 +126,9 @@ interface ProgressItem {
   status: 'success' | 'exception' | undefined;
 }
 
+// 最大并发上传数，可根据服务器承载能力调整
+const CONCURRENCY = 3;
+
 const router = useRouter();
 const uploadRef = ref<UploadInstance>();
 
@@ -134,8 +137,8 @@ const uploadedFiles = ref<UploadedFile[]>([]);
 const isUploading = ref(false);
 const uploadProgress = ref<ProgressItem[]>([]);
 
-const uploadCompletedCount = computed(() => 
-  uploadProgress.value.filter(p => p.status === 'success').length
+const uploadCompletedCount = computed(() =>
+  uploadProgress.value.filter(p => p.status === 'success' || p.status === 'exception').length
 );
 
 const handleFileChange = (file: UploadFile, fileList: UploadFiles) => {
@@ -146,6 +149,42 @@ const handleFileRemove = (file: UploadFile, fileList: UploadFiles) => {
   selectedFiles.value = fileList;
 };
 
+/**
+ * 上传单个文件，更新对应进度条
+ */
+const uploadOne = async (file: UploadFile) => {
+  const progressItem = uploadProgress.value.find(p => p.uid === file.uid);
+  if (!progressItem) return;
+
+  const formData = new FormData();
+  formData.append('file', file.raw as File);
+
+  try {
+    const response = await axios.post('/api/upload', formData, {
+      onUploadProgress: (e) => {
+        if (e.total) {
+          progressItem.percentage = Math.round((e.loaded * 100) / e.total);
+        }
+      },
+    });
+    const { code, msg, data } = response.data;
+    if (code === 1) {
+      progressItem.status = 'success';
+      uploadedFiles.value.push(data);
+    } else {
+      progressItem.status = 'exception';
+      ElMessage.error(`${file.name} 上传失败: ${msg || '未知错误'}`);
+    }
+  } catch (error: any) {
+    progressItem.status = 'exception';
+    ElMessage.error(`${file.name} 上传失败: ${error.response?.data?.msg || '网络错误'}`);
+  }
+};
+
+/**
+ * 并发上传：最多 CONCURRENCY 个文件同时上传
+ * 利用 worker 池模式，持续从队列取文件上传直到队列为空
+ */
 const handleUpload = async () => {
   if (selectedFiles.value.length === 0) {
     ElMessage.warning('请先选择文件');
@@ -153,7 +192,7 @@ const handleUpload = async () => {
   }
 
   isUploading.value = true;
-  uploadedFiles.value = []; // Clear previous results
+  uploadedFiles.value = [];
   uploadProgress.value = selectedFiles.value.map(f => ({
     uid: f.uid,
     name: f.name,
@@ -161,36 +200,19 @@ const handleUpload = async () => {
     status: undefined,
   }));
 
-  for (const file of selectedFiles.value) {
-    const progressItem = uploadProgress.value.find(p => p.uid === file.uid);
-    if (!progressItem) continue;
+  // 建立任务队列
+  const queue = [...selectedFiles.value];
 
-    const formData = new FormData();
-    formData.append('file', file.raw as File);
-
-    try {
-      const response = await axios.post('/api/upload', formData, {
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            progressItem.percentage = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          }
-        },
-      });
-
-      const { code, msg, data } = response.data;
-      if (code === 1) {
-        progressItem.status = 'success';
-        uploadedFiles.value.push(data);
-      } else {
-        progressItem.status = 'exception';
-        ElMessage.error(`${file.name} 上传失败: ${msg || '未知错误'}`);
-      }
-    } catch (error: any) {
-      progressItem.status = 'exception';
-      const errorMsg = error.response?.data?.msg || '网络错误';
-      ElMessage.error(`${file.name} 上传失败: ${errorMsg}`);
+  // 启动 CONCURRENCY 个 worker，每个 worker 持续消费队列
+  const workers = Array.from({ length: CONCURRENCY }, async () => {
+    while (queue.length > 0) {
+      const file = queue.shift();
+      if (file) await uploadOne(file);
     }
-  }
+  });
+
+  // 等待所有 worker 完成
+  await Promise.all(workers);
 
   isUploading.value = false;
   selectedFiles.value = [];
@@ -242,11 +264,9 @@ const handleDelete = async (file: UploadedFile) => {
         type: 'warning',
       }
     );
-    
     const response = await deleteFiles([file.fileId]);
     if (response.data?.code === 1) {
       ElMessage.success('文件删除成功');
-      // Remove file from the list
       uploadedFiles.value = uploadedFiles.value.filter(f => f.fileId !== file.fileId);
     } else {
       ElMessage.error(response.data?.msg || '删除失败');
@@ -274,7 +294,6 @@ const handlePaste = (event: ClipboardEvent) => {
           raw: Object.assign(file, { uid }) as UploadRawFile,
           status: 'ready',
         };
-        
         const isDuplicate = selectedFiles.value.some(f => f.name === uploadFile.name && f.size === uploadFile.size);
         if (!isDuplicate) {
           selectedFiles.value.push(uploadFile);
@@ -338,8 +357,8 @@ onBeforeUnmount(() => {
 }
 
 .file-name {
-  flex-shrink: 1; /* Allow shrinking */
-  max-width: 120px; /* Set max-width instead of fixed width */
+  flex-shrink: 1;
+  max-width: 120px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -394,57 +413,56 @@ onBeforeUnmount(() => {
   padding-top: 15px;
   display: flex;
   gap: 10px;
-  flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
+  flex-wrap: wrap;
 }
 
 :deep(.el-progress-bar__inner--striped) {
-  animation-duration: 2s; /* 减慢流动动画速度，默认为1s */
+  animation-duration: 2s;
 }
 
-/* Responsive styles for UploadPage.vue */
-@media (max-width: 767px) { /* Mobile breakpoint */
+@media (max-width: 767px) {
   .page-container {
-    padding: 10px; /* Reduce padding on mobile */
+    padding: 10px;
   }
 
   .card-header {
-    flex-wrap: wrap; /* Allow header items to wrap */
-    justify-content: center; /* Center header items */
+    flex-wrap: wrap;
+    justify-content: center;
     text-align: center;
   }
 
   .card-header .el-button {
-    margin-top: 5px; /* Add some space if button wraps */
+    margin-top: 5px;
   }
 
   .upload-actions .el-button {
-    width: 100%; /* Make upload button full width */
+    width: 100%;
   }
 
   .file-progress-item {
-    flex-direction: column; /* Stack file name and progress bar */
-    align-items: flex-start; /* Align items to start */
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .file-name {
-    width: 100%; /* Take full width */
-    max-width: none; /* Remove max-width constraint */
+    width: 100%;
+    max-width: none;
     text-align: left;
   }
 
   .el-progress {
-    width: 100%; /* Make progress bar full width */
+    width: 100%;
   }
 
   .uploaded-file-item {
-    flex-direction: column; /* Stack file details and buttons */
+    flex-direction: column;
     align-items: flex-start;
     gap: 5px;
   }
 
   .uploaded-file-item .el-button-group {
-    width: 100%; /* Make button group full width */
-    justify-content: flex-start; /* Align buttons to start */
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 </style>
