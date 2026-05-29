@@ -13,7 +13,6 @@
         </div>
       </div>
       <div class="header-actions">
-        <!-- New mobile sidebar toggle -->
         <el-icon class="toggle-mobile-sidebar hidden-sm-and-up" @click="isMobileSidebarOpen = true">
           <Fold />
         </el-icon>
@@ -30,8 +29,8 @@
           </template>
         </el-dropdown>
         <el-dropdown @command="handleUserCommand">
-          <el-avatar 
-            class="user-avatar" 
+          <el-avatar
+            class="user-avatar"
             :size="32"
             src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png"
           />
@@ -43,7 +42,7 @@
         </el-dropdown>
       </div>
     </el-header>
-    
+
     <el-container class="main-container">
       <!-- Desktop Sidebar -->
       <el-aside v-if="!isMobile" :width="isCollapsed ? '64px' : '220px'" class="sidebar">
@@ -114,7 +113,7 @@
           </el-menu-item>
         </el-menu>
       </el-drawer>
-      
+
       <el-main class="main-content">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -127,9 +126,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { 
+import {
   HomeFilled, Folder, Top, EditPen, Sunny, Moon, Expand, Fold, Download, Monitor, SwitchButton
 } from '@element-plus/icons-vue'
 
@@ -141,10 +140,9 @@ const route = useRoute()
 const activeMenu = computed(() => route.path)
 const isCollapsed = ref(false)
 const theme = ref<Theme>('auto')
-const isMobile = ref(false) // New ref for mobile detection
-const isMobileSidebarOpen = ref(false) // New ref for mobile sidebar drawer
+const isMobile = ref(false)
+const isMobileSidebarOpen = ref(false)
 
-// --- Theme Switching Logic ---
 const themeIcon = computed(() => {
   if (theme.value === 'light') return Sunny
   if (theme.value === 'dark') return Moon
@@ -172,47 +170,44 @@ const systemThemeChangeHandler = (e: MediaQueryListEvent) => {
   }
 }
 
-// --- Responsive Logic ---
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
 const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768 // Define mobile breakpoint
-  if (isMobile.value) {
-    isCollapsed.value = true // Collapse sidebar on mobile
-  } else {
-    // Restore sidebar state on desktop if it was expanded before
-    const savedSidebarState = localStorage.getItem('sidebarState')
-    isCollapsed.value = savedSidebarState === 'collapsed'
-  }
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    isMobile.value = window.innerWidth < 768
+    if (isMobile.value) {
+      isCollapsed.value = true
+    } else {
+      const savedSidebarState = localStorage.getItem('sidebarState')
+      isCollapsed.value = savedSidebarState === 'collapsed'
+    }
+  }, 150)
 }
 
-// --- Component Lifecycle ---
 onMounted(() => {
-  // Initial check for mobile
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
-
-  // Restore sidebar state (only for desktop, mobile state is handled by checkMobile)
+  isMobile.value = window.innerWidth < 768
   if (!isMobile.value) {
     const savedSidebarState = localStorage.getItem('sidebarState')
     isCollapsed.value = savedSidebarState === 'collapsed'
+  } else {
+    isCollapsed.value = true
   }
-  
-  // Restore theme
+
+  window.addEventListener('resize', checkMobile)
+
   const savedTheme = localStorage.getItem('theme') as Theme | null
   theme.value = savedTheme || 'auto'
   applyTheme()
-  
-  // Add listener for system theme changes
+
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', systemThemeChangeHandler)
 })
 
 onBeforeUnmount(() => {
-  // Clean up listeners
   window.removeEventListener('resize', checkMobile)
+  if (resizeTimer) clearTimeout(resizeTimer)
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', systemThemeChangeHandler)
 })
 
-
-// --- Other Logic ---
 const toggleSidebar = () => {
   isCollapsed.value = !isCollapsed.value
   localStorage.setItem('sidebarState', isCollapsed.value ? 'collapsed' : 'expanded')
@@ -220,8 +215,8 @@ const toggleSidebar = () => {
 
 const handleUserCommand = (command: string) => {
   if (command === 'logout') {
-    localStorage.removeItem('token');
-    router.push('/login');
+    localStorage.removeItem('token')
+    router.push('/login')
   }
 }
 
@@ -231,12 +226,11 @@ const handleSelect = (index: string) => {
 
 const handleSelectAndCloseDrawer = (index: string) => {
   handleSelect(index)
-  isMobileSidebarOpen.value = false // Close drawer after selection
+  isMobileSidebarOpen.value = false
 }
 </script>
 
 <style scoped>
-/* Basic layout structure */
 .app-container {
   height: 100vh;
   width: 100vw;
@@ -251,7 +245,7 @@ const handleSelectAndCloseDrawer = (index: string) => {
   height: 60px;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--container-bg-color);
-  transition: background-color 0.3s, border-color 0.3s;
+  /* 删除 transition：主题切换不需要动画，避免触发全局重绘 */
 }
 
 .header-logo, .header-actions {
@@ -283,8 +277,9 @@ const handleSelectAndCloseDrawer = (index: string) => {
 .sidebar {
   background-color: var(--container-bg-color);
   border-right: 1px solid var(--border-color);
-  transition: width 0.3s, background-color 0.3s, border-color 0.3s;
   overflow: hidden;
+  /* 删除 transition: width，宽度动画会触发整个页面 reflow + repaint */
+  will-change: width;
 }
 
 .sidebar-menu {
@@ -299,10 +294,10 @@ const handleSelectAndCloseDrawer = (index: string) => {
   overflow-y: auto;
 }
 
-/* Transitions */
+/* 路由切换动画缩短至 0.15s */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.15s ease;
 }
 
 .fade-enter-from,
@@ -310,41 +305,38 @@ const handleSelectAndCloseDrawer = (index: string) => {
   opacity: 0;
 }
 
-/* Responsive styles */
-/* Hide desktop elements on extra small screens (xs) */
 .hidden-xs-only {
   display: none !important;
 }
 
-/* Show mobile elements on extra small screens (xs) and hide on small (sm) and up */
 .hidden-sm-and-up {
   display: none !important;
 }
 
-@media (max-width: 767px) { /* Mobile breakpoint */
+@media (max-width: 767px) {
   .hidden-xs-only {
     display: none !important;
   }
   .hidden-sm-and-up {
-    display: flex !important; /* Or block, depending on element */
+    display: flex !important;
   }
 
   .header {
-    padding: 0 15px; /* Smaller padding on mobile */
+    padding: 0 15px;
   }
 
   .header-logo .logo-text {
-    display: none; /* Hide logo text on mobile */
+    display: none;
   }
 
   .toggle-mobile-sidebar {
     cursor: pointer;
     font-size: 20px;
-    margin-right: 10px; /* Space between toggle and logo */
+    margin-right: 10px;
   }
 
   .main-content {
-    padding: 10px; /* Smaller padding for main content on mobile */
+    padding: 10px;
   }
 }
 </style>
