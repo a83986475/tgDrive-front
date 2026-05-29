@@ -54,17 +54,17 @@
         <el-empty v-if="fileList.length === 0 && !loading" description="暂无文件" />
         <el-skeleton v-if="loading" :rows="5" animated />
         <div v-else>
-          <div 
-            v-for="file in fileList" 
-            :key="file.fileId" 
+          <div
+            v-for="file in fileList"
+            :key="file.fileId"
             class="mobile-file-item"
             :class="{ 'is-selected': isSelected(file) }"
             @click="toggleSelection(file)"
           >
             <div class="file-info">
-              <el-checkbox 
-                :model-value="isSelected(file)" 
-                @change="() => toggleSelection(file)" 
+              <el-checkbox
+                :model-value="isSelected(file)"
+                @change="() => toggleSelection(file)"
                 @click.stop
                 size="large"
                 class="mobile-checkbox"
@@ -88,27 +88,27 @@
 
       <div class="footer-toolbar" :class="{ 'is-mobile': isMobile }">
         <div class="batch-actions">
-          <el-button 
-            type="primary" 
-            @click="batchCopyMarkdown" 
+          <el-button
+            type="primary"
+            @click="batchCopyMarkdown"
             :disabled="selectedFiles.length === 0"
             :icon="Memo"
             plain
           >
             {{ isMobile ? '复制MD' : '批量复制 (MD)' }}
           </el-button>
-          <el-button 
-            type="success" 
-            @click="batchCopyLinks" 
+          <el-button
+            type="success"
+            @click="batchCopyLinks"
             :disabled="selectedFiles.length === 0"
             :icon="Link"
             plain
           >
             {{ isMobile ? '复制链接' : '批量复制 (链接)' }}
           </el-button>
-          <el-button 
-            type="danger" 
-            @click="batchDelete" 
+          <el-button
+            type="danger"
+            @click="batchDelete"
             :disabled="selectedFiles.length === 0"
             :icon="Delete"
             plain
@@ -146,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import request from '../utils/request';
 import { ElMessage, ElMessageBox, ElCheckbox } from 'element-plus';
 import { FolderOpened, Refresh, Document, Link, Download, Memo, Delete } from '@element-plus/icons-vue';
@@ -170,20 +170,37 @@ const selectedFiles = ref<FileItem[]>([]);
 const isMobile = ref(false);
 const mobileListRef = ref<HTMLElement | null>(null);
 
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768;
+// 复用 Intl.DateTimeFormat 实例，避免每次渲染都创建新对象
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false
+});
+
+const formatUploadTime = (timestamp: number) => {
+  return timeFormatter.format(new Date(timestamp * 1000));
 };
 
-const isSelected = (file: FileItem) => {
-  return selectedFiles.value.some(selected => selected.fileId === file.fileId);
-};
+// 用 Set 缓存已选 fileId，isSelected 从 O(n) 降至 O(1)
+const selectedSet = computed(() => new Set(selectedFiles.value.map(f => f.fileId)));
+
+const isSelected = (file: FileItem) => selectedSet.value.has(file.fileId);
 
 const toggleSelection = (file: FileItem) => {
   if (isSelected(file)) {
-    selectedFiles.value = selectedFiles.value.filter(selected => selected.fileId !== file.fileId);
+    selectedFiles.value = selectedFiles.value.filter(s => s.fileId !== file.fileId);
   } else {
     selectedFiles.value.push(file);
   }
+};
+
+// resize 防抖：避免窗口缩放时高频触发 Vue 响应式更新
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+const checkMobile = () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    isMobile.value = window.innerWidth < 768;
+  }, 150);
 };
 
 const fetchFileList = async () => {
@@ -237,18 +254,15 @@ const handleDelete = async (file: FileItem) => {
         type: 'warning',
       }
     );
-    
     const fileIds = [file.fileId];
     const response = await deleteFiles(fileIds);
     if (response.data?.code === 1) {
       ElMessage.success('文件删除成功');
-      // Refresh list
       fetchFileList();
     } else {
       ElMessage.error(response.data?.msg || '删除失败');
     }
   } catch (error) {
-    // If error is 'cancel', it means user clicked cancel button.
     if (error !== 'cancel') {
       ElMessage.error('删除操作失败');
     }
@@ -260,7 +274,6 @@ const batchDelete = async () => {
     ElMessage.warning('请至少选择一个文件');
     return;
   }
-
   try {
     await ElMessageBox.confirm(
       `确定要删除选中的 ${selectedFiles.value.length} 个文件吗？此操作不可恢复。`,
@@ -271,13 +284,11 @@ const batchDelete = async () => {
         type: 'warning',
       }
     );
-
     const fileIds = selectedFiles.value.map(f => f.fileId);
     const response = await deleteFiles(fileIds);
     if (response.data?.code === 1) {
       ElMessage.success(`成功删除 ${selectedFiles.value.length} 个文件`);
       selectedFiles.value = [];
-      // Refresh list
       fetchFileList();
     } else {
       ElMessage.error(response.data?.msg || '批量删除失败');
@@ -287,10 +298,6 @@ const batchDelete = async () => {
       ElMessage.error('删除操作失败');
     }
   }
-};
-
-const formatUploadTime = (timestamp: number) => {
-  return new Date(timestamp * 1000).toLocaleString('zh-CN', { hour12: false });
 };
 
 const openUpdateDialog = () => {
@@ -317,17 +324,17 @@ const confirmUpdate = async () => {
 
 const handlePageChange = (page: number) => {
   currentPage.value = page;
-  selectedFiles.value = []; // Clear selection on page change
+  selectedFiles.value = [];
   fetchFileList();
   if (isMobile.value && mobileListRef.value) {
-    mobileListRef.value.scrollTop = 0; // Scroll to top on page change
+    mobileListRef.value.scrollTop = 0;
   }
 };
 
 const handleSizeChange = (size: number) => {
   pageSize.value = size;
   currentPage.value = 1;
-  selectedFiles.value = []; // Clear selection on size change
+  selectedFiles.value = [];
   fetchFileList();
 };
 
@@ -344,13 +351,14 @@ const openLink = (url: string) => {
 };
 
 onMounted(() => {
-  checkMobile();
+  isMobile.value = window.innerWidth < 768;
   window.addEventListener('resize', checkMobile);
   fetchFileList();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', checkMobile);
+  if (resizeTimer) clearTimeout(resizeTimer);
 });
 </script>
 
@@ -367,7 +375,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
-  overflow: hidden; /* Prevent card from overflowing page */
+  overflow: hidden;
 }
 
 .card-header {
@@ -390,7 +398,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: hidden; /* Important for layout */
+  overflow: hidden;
 }
 
 .el-table {
@@ -403,7 +411,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 10px 20px;
   border-top: 1px solid var(--el-border-color-lighter);
-  flex-shrink: 0; /* Prevent footer from shrinking */
+  flex-shrink: 0;
 }
 
 .batch-actions {
@@ -411,11 +419,10 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-/* Mobile List View Styles */
 .mobile-file-list {
   padding: 10px;
   flex-grow: 1;
-  overflow-y: auto; /* Enable scrolling for the list itself */
+  overflow-y: auto;
 }
 
 .mobile-file-item {
@@ -466,7 +473,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--el-text-color-secondary);
   gap: 5px;
-  padding-left: 40px; /* Align with file name */
+  padding-left: 40px;
 }
 
 .mobile-file-item .file-actions {
@@ -480,7 +487,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-/* Responsive styles for FileList.vue */
 @media (max-width: 767px) {
   .page-container {
     padding: 10px;
@@ -515,7 +521,7 @@ onBeforeUnmount(() => {
 
   .batch-actions .el-button {
     flex-grow: 1;
-    width: 0; /* Allow button to shrink */
+    width: 0;
   }
 
   .el-pagination {

@@ -1,14 +1,16 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 
-// 导入您的路由页面
-import Upload from '../views/UploadPage.vue';
-import Home from '../views/Home.vue';
-import FileList from '../views/FileList.vue';
-import Login from '../views/LoginPage.vue';
+// Layout 组件立即需要，保持静态导入
 import Layout from '@/components/Layout.vue';
 import AdminLayout from '@/components/AdminLayout.vue';
-import ChangePassword from '@/views/ChangePassword.vue';
-import BackupPage from '@/views/BackupPage.vue';
+
+// 所有页面改为懒加载，减少首屏 JS 体积
+const Upload         = () => import(/* webpackChunkName: "upload" */      '../views/UploadPage.vue');
+const Home           = () => import(/* webpackChunkName: "home" */        '../views/Home.vue');
+const FileList       = () => import(/* webpackChunkName: "filelist" */    '../views/FileList.vue');
+const Login          = () => import(/* webpackChunkName: "login" */       '../views/LoginPage.vue');
+const ChangePassword = () => import(/* webpackChunkName: "changepwd" */   '@/views/ChangePassword.vue');
+const BackupPage     = () => import(/* webpackChunkName: "backup" */      '@/views/BackupPage.vue');
 
 interface RouteMeta extends Record<string | number | symbol, unknown> {
   requiresAuth?: boolean;
@@ -76,9 +78,9 @@ const routes: Array<RouteRecordRaw> = [
       },
     ]
   },
-  { 
-    path: '/login', 
-    component: Login 
+  {
+    path: '/login',
+    component: Login
   },
   {
     path: '/:pathMatch(.*)*',
@@ -91,24 +93,29 @@ const router = createRouter({
   routes,
 });
 
+// 缓存 token/role 到内存，避免每次路由跳转都读 localStorage
+let cachedToken = localStorage.getItem('token');
+let cachedRole = localStorage.getItem('role');
+
+// 提供方法供 login/logout 时更新缓存
+export const updateAuthCache = () => {
+  cachedToken = localStorage.getItem('token');
+  cachedRole = localStorage.getItem('role');
+};
+
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token');
-  const userRole = localStorage.getItem('role');
-  
-  // 检查是否登录
-  if (to.meta.requiresAuth && !token) {
+  if (to.meta.requiresAuth && !cachedToken) {
     next('/login');
     return;
   }
 
-  // 检查角色权限
   if (to.meta.requiredRole) {
-    if (userRole === 'admin') {
+    if (cachedRole === 'admin') {
       next();
-    } else if (userRole === 'visitor' && to.meta.requiredRole === 'visitor') {
+    } else if (cachedRole === 'visitor' && to.meta.requiredRole === 'visitor') {
       next();
     } else {
-      next('/'); // 无权限用户重定向到首页
+      next('/');
     }
     return;
   }
