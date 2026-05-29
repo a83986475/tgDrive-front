@@ -146,9 +146,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import request from '../utils/request';
-import { ElMessage, ElMessageBox, ElCheckbox } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { FolderOpened, Refresh, Document, Link, Download, Memo, Delete } from '@element-plus/icons-vue';
 import { deleteFiles } from '../api/file';
 
@@ -170,31 +170,13 @@ const selectedFiles = ref<FileItem[]>([]);
 const isMobile = ref(false);
 const mobileListRef = ref<HTMLElement | null>(null);
 
-// 复用 Intl.DateTimeFormat 实例，避免每次渲染都创建新对象
-const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+// 日期格式化复用实例，避免每次创建
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric', month: '2-digit', day: '2-digit',
   hour: '2-digit', minute: '2-digit', second: '2-digit',
   hour12: false
 });
 
-const formatUploadTime = (timestamp: number) => {
-  return timeFormatter.format(new Date(timestamp * 1000));
-};
-
-// 用 Set 缓存已选 fileId，isSelected 从 O(n) 降至 O(1)
-const selectedSet = computed(() => new Set(selectedFiles.value.map(f => f.fileId)));
-
-const isSelected = (file: FileItem) => selectedSet.value.has(file.fileId);
-
-const toggleSelection = (file: FileItem) => {
-  if (isSelected(file)) {
-    selectedFiles.value = selectedFiles.value.filter(s => s.fileId !== file.fileId);
-  } else {
-    selectedFiles.value.push(file);
-  }
-};
-
-// resize 防抖：避免窗口缩放时高频触发 Vue 响应式更新
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 const checkMobile = () => {
   if (resizeTimer) clearTimeout(resizeTimer);
@@ -203,10 +185,28 @@ const checkMobile = () => {
   }, 150);
 };
 
+// 用 Set 加速选中状态查询
+const selectedSet = ref(new Set<string>());
+
+const isSelected = (file: FileItem) => selectedSet.value.has(file.fileId);
+
+const toggleSelection = (file: FileItem) => {
+  const newSet = new Set(selectedSet.value);
+  if (newSet.has(file.fileId)) {
+    newSet.delete(file.fileId);
+    selectedFiles.value = selectedFiles.value.filter(f => f.fileId !== file.fileId);
+  } else {
+    newSet.add(file.fileId);
+    selectedFiles.value.push(file);
+  }
+  selectedSet.value = newSet;
+};
+
 const fetchFileList = async () => {
   loading.value = true;
   try {
-    const response = await request.get(`/fileList?page=${currentPage.value}&size=${pageSize.value}`);
+    // 修复：后端实际接口是 /file-list 而非 /fileList
+    const response = await request.get(`/file-list?page=${currentPage.value}&size=${pageSize.value}`);
     if (response.data?.code === 1) {
       const pageResult = response.data.data;
       fileList.value = pageResult.records || [];
@@ -223,6 +223,7 @@ const fetchFileList = async () => {
 
 const handleSelectionChange = (selection: FileItem[]) => {
   selectedFiles.value = selection;
+  selectedSet.value = new Set(selection.map(f => f.fileId));
 };
 
 const copyToClipboard = (text: string, message: string) => {
@@ -248,14 +249,9 @@ const handleDelete = async (file: FileItem) => {
     await ElMessageBox.confirm(
       `确定要删除文件 "${file.fileName}" 吗？此操作不可恢复。`,
       '警告',
-      {
-        confirmButtonText: '确定删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
     );
-    const fileIds = [file.fileId];
-    const response = await deleteFiles(fileIds);
+    const response = await deleteFiles([file.fileId]);
     if (response.data?.code === 1) {
       ElMessage.success('文件删除成功');
       fetchFileList();
@@ -263,50 +259,40 @@ const handleDelete = async (file: FileItem) => {
       ElMessage.error(response.data?.msg || '删除失败');
     }
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除操作失败');
-    }
+    if (error !== 'cancel') ElMessage.error('删除操作失败');
   }
 };
 
 const batchDelete = async () => {
-  if (selectedFiles.value.length === 0) {
-    ElMessage.warning('请至少选择一个文件');
-    return;
-  }
+  if (selectedFiles.value.length === 0) { ElMessage.warning('请至少选择一个文件'); return; }
   try {
     await ElMessageBox.confirm(
       `确定要删除选中的 ${selectedFiles.value.length} 个文件吗？此操作不可恢复。`,
       '警告',
-      {
-        confirmButtonText: '确定删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
     );
     const fileIds = selectedFiles.value.map(f => f.fileId);
     const response = await deleteFiles(fileIds);
     if (response.data?.code === 1) {
       ElMessage.success(`成功删除 ${selectedFiles.value.length} 个文件`);
       selectedFiles.value = [];
+      selectedSet.value = new Set();
       fetchFileList();
     } else {
       ElMessage.error(response.data?.msg || '批量删除失败');
     }
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除操作失败');
-    }
+    if (error !== 'cancel') ElMessage.error('删除操作失败');
   }
 };
 
-const openUpdateDialog = () => {
-  isDialogVisible.value = true;
-};
+const formatUploadTime = (timestamp: number) => dateFormatter.format(new Date(timestamp * 1000));
+
+const openUpdateDialog = () => { isDialogVisible.value = true; };
 
 const confirmUpdate = async () => {
   isDialogVisible.value = false;
-  const loadingInstance = ElMessage({ message: '正在更新...', type: 'info', duration: 0 });
+  const loadingMsg = ElMessage({ message: '正在更新...', type: 'info', duration: 0 });
   try {
     const response = await request.put('/file-url');
     if (response.data?.code === 1) {
@@ -318,37 +304,29 @@ const confirmUpdate = async () => {
   } catch (error) {
     ElMessage.error('更新失败，请检查网络');
   } finally {
-    loadingInstance.close();
+    loadingMsg.close();
   }
 };
 
 const handlePageChange = (page: number) => {
   currentPage.value = page;
   selectedFiles.value = [];
+  selectedSet.value = new Set();
   fetchFileList();
-  if (isMobile.value && mobileListRef.value) {
-    mobileListRef.value.scrollTop = 0;
-  }
+  if (isMobile.value && mobileListRef.value) mobileListRef.value.scrollTop = 0;
 };
 
 const handleSizeChange = (size: number) => {
   pageSize.value = size;
   currentPage.value = 1;
   selectedFiles.value = [];
+  selectedSet.value = new Set();
   fetchFileList();
 };
 
-const copyMarkdown = (row: FileItem) => {
-  copyToClipboard(`[${row.fileName}](${row.downloadUrl})`, 'Markdown 格式已复制');
-};
-
-const copyLink = (row: FileItem) => {
-  copyToClipboard(row.downloadUrl, '下载链接已复制');
-};
-
-const openLink = (url: string) => {
-  window.open(url, '_blank');
-};
+const copyMarkdown = (row: FileItem) => copyToClipboard(`[${row.fileName}](${row.downloadUrl})`, 'Markdown 格式已复制');
+const copyLink = (row: FileItem) => copyToClipboard(row.downloadUrl, '下载链接已复制');
+const openLink = (url: string) => window.open(url, '_blank');
 
 onMounted(() => {
   isMobile.value = window.innerWidth < 768;
@@ -435,8 +413,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   box-shadow: var(--el-box-shadow-light);
-  transition: background-color 0.3s, border-color 0.3s;
   cursor: pointer;
+  /* 删除 transition，避免每个卡片都触发重绘 */
 }
 
 .mobile-file-item.is-selected {
@@ -488,9 +466,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 767px) {
-  .page-container {
-    padding: 10px;
-  }
+  .page-container { padding: 10px; }
 
   .card-header {
     flex-direction: column;
@@ -498,13 +474,8 @@ onBeforeUnmount(() => {
     gap: 10px;
   }
 
-  .card-header .header-right {
-    width: 100%;
-  }
-
-  .card-header .el-button {
-    width: 100%;
-  }
+  .card-header .header-right { width: 100%; }
+  .card-header .el-button { width: 100%; }
 
   .footer-toolbar.is-mobile {
     flex-direction: column;
@@ -529,8 +500,6 @@ onBeforeUnmount(() => {
     justify-content: center;
   }
 
-  :deep(.el-pagination .el-pagination__sizes) {
-    margin: 0;
-  }
+  :deep(.el-pagination .el-pagination__sizes) { margin: 0; }
 }
 </style>
